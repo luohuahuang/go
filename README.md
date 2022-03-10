@@ -1,5 +1,5 @@
 # Golang Customised Version For QEX Framework
-## This Golang version is developed for [QEX framework](QEX url)
+## This Golang version is developed for [QEX framework](https://github.com/luohuahuang/qex/blob/main/README.md)
 * To enable the sending real-time test execution to QEX framework, you need to set,
     * `export ENABLE_QEX=true`
         * If not set, this Golang will be performing just like a regular distribution
@@ -11,3 +11,6 @@
         * If you are running test from Jenkins, this variable is pre-setup by Jenkins automatically
     * `export PACKAGE_NAME=product.sub-product.service.api # e.g, order.cart.checkout.add-item`
         * This variable will be used by QEX - Grafana dashboard to categorise and display your data better
+        
+## Contribution
+* Co-authored by Huang Luohua, Joseph Chu, Keshia Yap, Chua Hockyao
