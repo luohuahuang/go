@@ -333,13 +333,18 @@
 package testing
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"internal/race"
 	"io"
+	"log"
+	"math"
 	"math/rand"
+	"net/http"
 	"os"
 	"reflect"
 	"runtime"
@@ -437,6 +442,12 @@ var (
 	testlogFile *os.File
 
 	numFailed uint32 // number of test failures
+
+	isQEXEnabled      bool
+	caseMaintainerMap map[string]string
+	packageName       string
+	packageArr        []string
+	runId             string
 )
 
 type chattyPrinter struct {
@@ -1707,6 +1718,21 @@ func (m *M) Run() (code int) {
 
 	parseCpuList()
 
+	if os.Getenv("ENABLE_QEX") == "true" {
+		if _, err := os.Stat(os.Getenv("CASE_GIT_PAIR_FILE")); err == nil {
+			isQEXEnabled = true
+			runId = fmt.Sprintf("%s", time.Now().Format("2006-01-02-15:04:05"))
+			caseMaintainerMap = buildCaseAuthorPair()
+			packageName = os.Getenv("PACKAGE_NAME")
+			packageArr = strings.Split(packageName, ".")
+			if len(packageArr) < 4 {
+				packageArr = append(packageArr, "placeholder1", "placeholder2", "placeholder3", "placeholder4")
+			}
+		} else {
+			os.Exit(1)
+		}
+	}
+
 	m.before()
 	defer m.after()
 
@@ -1758,6 +1784,21 @@ func (t *T) report() {
 		t.flushToParent(t.name, format, "FAIL", t.name, dstr)
 	} else if t.chatty != nil {
 		if t.Skipped() {
+			if isQEXEnabled {
+				payload := QEXTestCase{
+					Product:    packageArr[0],
+					SubProduct: packageArr[1],
+					Service:    packageArr[2],
+					RunId:      fmt.Sprintf("%s-%s", runId, packageName),
+					API:        packageArr[3],
+					Case:       t.name,
+					Maintainer: caseMaintainerMap[t.name],
+					Timestamp:  time.Now().Unix(),
+					Duration:   math.Floor(t.duration.Seconds()*100) / 100,
+					Status:     StatusSkipped,
+				}
+				go sendMsgToQEX(payload)
+			}
 			t.flushToParent(t.name, format, "SKIP", t.name, dstr)
 		} else {
 			t.flushToParent(t.name, format, "PASS", t.name, dstr)
@@ -1836,7 +1877,28 @@ func runTests(matchString func(pat, str string) (bool, error), tests []InternalT
 			}
 			tRunner(t, func(t *T) {
 				for _, test := range tests {
-					t.Run(test.Name, test.F)
+					r := t.Run(test.Name, test.F)
+
+					if isQEXEnabled && !t.skipped {
+						status := StatusPass
+						if !r {
+							status = StatusFail
+						}
+						var payload QEXTestCase
+						payload = QEXTestCase{
+							Product:    packageArr[0],
+							SubProduct: packageArr[1],
+							Service:    packageArr[2],
+							RunId:      fmt.Sprintf("%s-%s", runId, packageName),
+							API:        packageArr[3],
+							Case:       test.Name,
+							Maintainer: caseMaintainerMap[test.Name],
+							Timestamp:  time.Now().Unix(),
+							Duration:   math.Floor(t.duration.Seconds()*100) / 100,
+							Status:     status,
+						}
+						go sendMsgToQEX(payload)
+					}
 				}
 			})
 			select {
@@ -2058,4 +2120,57 @@ func parseCpuList() {
 
 func shouldFailFast() bool {
 	return *failFast && atomic.LoadUint32(&numFailed) > 0
+}
+
+const (
+	StatusPass    = 0
+	StatusFail    = 1
+	StatusSkipped = 2
+)
+
+type QEXTestCase struct {
+	Product    string  `json:"product"`
+	SubProduct string  `json:"sub_product"`
+	Service    string  `json:"service"`
+	API        string  `json:"api"`
+	RunId      string  `json:"run_id"`
+	Case       string  `json:"case"`
+	Branch     string  `json:"branch"`
+	Maintainer string  `json:"maintainer"`
+	Timestamp  int64   `json:"timestamp"`
+	Duration   float64 `json:"duration"`
+	Status     int     `json:"status"`
+}
+
+func buildCaseAuthorPair() map[string]string {
+	file, err := os.Open(os.Getenv("CASE_GIT_PAIR_FILE"))
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	var kv = map[string]string{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		// ea70897 john.don@example.com 2022-02-16 Test_find_something 18 ./find_something_test.go
+		row := strings.Split(scanner.Text(), " ")
+		kv[row[3]] = row[1]
+	}
+
+	if err = scanner.Err(); err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	return kv
+}
+
+func sendMsgToQEX(qex QEXTestCase) {
+	qex.Branch = os.Getenv("GIT_BRANCH")
+	payload, _ := json.Marshal(qex)
+	if _, err := http.Post(os.Getenv("QEX_WEB_SERVER_TEST_RUN_URL"), "application/json", bytes.NewBuffer(payload)); err != nil {
+		log.Println(fmt.Sprintf("*** QEX: %s", err.Error()))
+	} else {
+		log.Println(fmt.Sprintf("*** QEX: %s", string(payload)))
+	}
 }
