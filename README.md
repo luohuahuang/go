@@ -1,4 +1,11 @@
 # Golang Customised Version For QEX Framework
+
+## How to Build
+* `export GOROOT_BOOTSTRAP="/path/to/any/go-greater-than-1.4-home/"`
+* `cd src/`
+* `sh make.bash`
+* update your go bin path to bin/
+
 ## This Golang version is developed for [QEX framework](https://github.com/luohuahuang/qex/blob/main/README.md)
 * To enable the sending real-time test execution to QEX framework, you need to set,
     * `export ENABLE_QEX=true`
